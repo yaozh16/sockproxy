@@ -1,7 +1,9 @@
 {
   "server_address": "183.172.167.238",
-  "server_port":  22022,
+  "server_port":  22020,
 
+
+  "whitelist": ["183.172.167.238"],
   "server_pri": 0,
   "local_pub": 0
 }

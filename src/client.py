@@ -7,7 +7,7 @@ from urllib import request
 from urllib.error import URLError
 
 # 设置代理
-socks.set_default_proxy(socks.SOCKS5, "183.172.167.238", 22023, username='yaozh16', password='123456')
+socks.set_default_proxy(socks.SOCKS5, "183.172.167.238", 22022, username='yaozh16', password='123456')
 socket.socket = socks.socksocket
 
 test_url = 'http://learn.tsinghua.edu.cn'

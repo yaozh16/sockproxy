@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
-
+import random
 import select
 import socket
 import json
+import os
 import struct
+import hashlib
+from diffiehellman.diffiehellman import DiffieHellman
 from socketserver import StreamRequestHandler as Tcp, ThreadingTCPServer
 
 SOCKS_VERSION = 5                           # socks版本
@@ -39,20 +42,10 @@ global_config = {}
 
 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 """
+from Handler import Handler
 
 
-class SockProxy(Tcp):
-    def log(self, msg):
-        print("[{}]{}".format(self.client_address, msg))
-
-    def getNByte(self, n, msg=""):
-        recv = b''
-        recv += bytes(self.request.recv(n - len(recv)))
-        self.log("[ {} ] recv: ({}/{}): {}".format(msg, len(recv), n, recv))
-        while len(recv) < n:
-            recv += self.request.recv(n - len(recv))
-        return recv
-
+class SockProxy(Handler):
     def handle(self):
         self.log("客户端请求连接！")
         if "*" not in global_config["whitelist"] and self.client_address[0] not in global_config["whitelist"]:
@@ -70,6 +63,9 @@ class SockProxy(Tcp):
         """
         # 从客户端读取并解包两个字节的数据
         header = self.getNByte(2, "header")
+        if header is None:
+            self.server.close_request(self.request)
+            return
         VER, NMETHODS = struct.unpack("!BB", header)
         # 设置socks5协议，METHODS字段的数目大于0
         assert VER == SOCKS_VERSION, 'SOCKS版本错误'
@@ -78,8 +74,9 @@ class SockProxy(Tcp):
         # 无需认证：0x00    用户名密码认证：0x02
         # assert NMETHODS > 0
         methods = self.IsAvailable(NMETHODS)
+
         # 检查是否支持该方式，不支持则断开连接
-        if 0 not in set(methods):
+        if (methods is None) or (0 not in set(methods)):
             self.server.close_request(self.request)
             return
 
@@ -122,25 +119,22 @@ class SockProxy(Tcp):
             # 转换IPV4地址字符串（xxx.xxx.xxx.xxx）成为32位打包的二进制格式（长度为4个字节的二进制字符串）
             dst_address = socket.inet_ntoa(self.request.recv(4))
         elif address_type == 3:     # Domain
-            domain_length = ord(self.getNByte(1, 'domain_length'))
-            dst_address = self.getNByte(domain_length, "domain")
+            domain_length = self.getNByte(1, 'domain_length')
+            if domain_length is None:
+                self.server.close_request(self.request)
+                return
+            dst_address = self.getNByte(ord(domain_length), "domain")
+            if dst_address is None:
+                self.server.close_request(self.request)
+                return
         else:   # TODO: IPv6
             self.server.close_request(self.request)
             return
         dst_port = struct.unpack('!H', self.request.recv(2))[0]
 
-
-        """
-        四、服务端回应连接
-            +----+-----+-------+------+----------+----------+
-            |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
-            +----+-----+-------+------+----------+----------+
-            | 1  |  1  |   1   |  1   | Variable |    2     |
-            +----+-----+-------+------+----------+----------+
-        """
-        # 响应，只支持CONNECT请求
+        # 第四阶段由server完成
         try:
-            address = global_config["sererv_address"]
+            address = global_config["server_address"]
             port = global_config["server_port"]
             remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             remote.connect((address, port))
@@ -150,7 +144,9 @@ class SockProxy(Tcp):
             self.log(err)
             self.server.close_request(self.request)
             return
-        self.HandShakeWithServer(remote, dst_address, dst_port, cmd)
+        if None is self.HandShakeWithServer(remote, dst_address, dst_port, cmd):
+            self.server.close_request(self.request)
+            return
         # 建立连接成功，开始交换数据
         self.ExchangeData(self.request, remote)
         self.server.close_request(self.request)
@@ -162,20 +158,29 @@ class SockProxy(Tcp):
         """
         methods = []
         for i in range(n):
-            methods.append(ord(self.getNByte(1, "method")))
+            tmp = self.getNByte(1, "method")
+            if tmp is None:
+                return None
+            methods.append(ord(tmp))
         return methods
 
     def VerifyAuth(self, current_request):
         """
         校验用户名和密码
         """
-        version = ord(self.getNByte(1, "verify version"))
-        assert version == 1, print(version)
-        username_len = ord(self.getNByte(1))
-        username = self.getNByte(username_len, "username").decode('utf-8')
+        version = self.getNByte(1, "verify version")
+        if version is None or ord(version) == 1:
+            return False
+        version = ord(version)
+        username = self.getByteStream(msg="username")
+        if username is None:
+            return False
+        username = username.decode('utf-8')
         self.log(username)
-        password_len = ord(self.getNByte(1))
-        password = self.getNByte(password_len, "password").decode('utf-8')
+        password = self.getByteStream(msg="password")
+        if password is None:
+            return False
+        password = password.decode('utf-8')
         self.log(password)
         if username == global_config["username"] and password == global_config["password"]:
             # 验证成功, status = 0
@@ -186,7 +191,6 @@ class SockProxy(Tcp):
             # 验证失败, status != 0
             response = struct.pack("!BB", version, 0xFF)
             current_request.sendall(response)
-            self.server.close_request(current_request)
             return False
 
     def ExchangeData(self, client, remote):
@@ -210,7 +214,80 @@ class SockProxy(Tcp):
                     break
 
     def HandShakeWithServer(self, remote, dst_address, dst_port, cmd):
-        pass
+        """
+            设计交互协议：
+                1. server 给出哈希种子 S : 形式: | 1 | Variable |   这一步希望保障两边RandomSeed不一样
+                2. local 生成P1与对应Y1，server生成P2与对应Y2
+                3. local 传输字符串X1、server的public公钥加密Y1的EY1、local私钥加密前面两部分HASH结果的E1 给server:
+                    形式: | 1 | L | Variable | 1 | L | Variable | 1 | L | Variable |
+                4. server 通过X1、EY1的HASH的结果与E1解密结果对比，判断是否是local，如果否则断开，否则继续
+                5. server 传输字符串X2、public公钥加密Y2的EY2、server私钥加密前面两部分HASH结果的E2 给local:
+                    形式: | 1 | L | Variable | 1 | L | Variable | 1 | L | Variable |
+                6. local 通过X2、EY2的HASH的结果与E2解密结果对比，判断是否是server，如果否则断开，否则继续
+                7. local根据P1和Y2、server根据P2和Y1计算共同的会话密钥 SK
+                8. local向server传输 address, port, cmd
+        """
+        # step 1
+        self.log("step1")
+        HASH_SEED = self.getByteStream(msg="HASH SEED", from_socket=remote)
+        if HASH_SEED is None:
+            return None
+        os.environ['PYTHONHASHSEED'] = str(HASH_SEED,encoding='utf8')
+
+        # step 2
+        self.log("step2")
+        DH = DiffieHellman(group=5, key_length=200)
+        DH.generate_private_key()
+        DH.generate_public_key()
+        Y = DH.public_key
+
+        # step 3
+        self.log("step3")
+        X1 = bytes("".join([chr(random.randint(0, 127)) for i in range(100)]), encoding='utf-8')
+        EY1 = bytes(self.pub_encrypt(bytes(str(Y), encoding='utf8'), global_config["server_pub"]))
+        HASHED_1 = hashlib.new("sha256", X1+EY1).digest()
+        E1 = self.pri_encrypt(HASHED_1, global_config["local_pri"])
+        self.sendLongByteStream(X1, to_socket=remote)
+        self.sendLongByteStream(EY1, to_socket=remote)
+        self.sendLongByteStream(E1, to_socket=remote)
+
+        # step 6
+        self.log("step6")
+        X2 = self.getLongByteStream(from_socket=remote)
+        if X2 is None:
+            return None
+        EY2 = self.getLongByteStream(from_socket=remote)
+        if EY2 is None:
+            return None
+        HASHED_2 = self.getLongByteStream(from_socket=remote)
+        if HASHED_2 is None:
+            return None
+        if self.pub_decrypt(HASHED_2, pub=global_config["server_pub"]) != hashlib.new("sha256", X2 + EY2).digest():
+            self.log("签名无效！")
+            return None
+        # step 7
+        DH.generate_shared_secret(int(str(self.pri_decrypt(EY2, global_config["local_pri"]),
+                                          encoding='utf8')))
+
+        self.SessionKey = DH.shared_key
+        self.log("[SessionKey build]: {}".format(self.SessionKey))
+        # step 8
+        control_msg = ":".join([str(dst_address), str(dst_port), str(cmd)])
+        self.sendByteStream(self.Encrypt(bytes(control_msg, encoding='utf8')), to_socket=remote)
+        return True
+
+
+    def pri_encrypt(self, msg_bytes: bytes, pri):
+        return msg_bytes
+
+    def pri_decrypt(self, msg_bytes: bytes, pri):
+        return msg_bytes
+
+    def pub_encrypt(self, msg_bytes: bytes, pub):
+        return msg_bytes
+
+    def pub_decrypt(self, msg_bytes: bytes, pub):
+        return msg_bytes
 
     def Encrypt(self, msg):
         return msg

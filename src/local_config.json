@@ -1,5 +1,5 @@
 {
-  "local_address": "0.0.0.0",
+  "local_address": "183.172.167.238",
   "local_port":  22022 ,
   "username": "yaozh16",
   "password": "123456",
@@ -8,6 +8,6 @@
   "local_pri": 0,
 
   "server_address": "183.172.167.238",
-  "server_port":  22022 ,
+  "server_port":  22020 ,
   "server_pub": 0
 }
