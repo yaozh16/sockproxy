@@ -5,6 +5,7 @@ import socket
 import json
 import struct
 from socketserver import StreamRequestHandler as Tcp, ThreadingTCPServer
+import pycrypto_utils
 
 SOCKS_VERSION = 5                           # socks版本
 
@@ -213,9 +214,11 @@ class SockProxy(Tcp):
         pass
 
     def Encrypt(self, msg):
+        msg = pycrypto_utils.encrypt(msg, session_key, init_vector)#session_key and init_vector as a 16 byte bytes
         return msg
 
     def Decrypt(self, msg):
+        msg = pycrypto_utils.decrypt(msg, session_key, init_vector)#session_key and init_vector as a 16 byte bytes
         return msg
 
 if __name__ == '__main__':
