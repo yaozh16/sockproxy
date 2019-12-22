@@ -4,6 +4,6 @@
 
 
   "whitelist": ["183.172.167.238"],
-  "server_pri": 0,
-  "local_pub": 0
+  "server_pri": "server-pri.pem",
+  "local_pub": "local-pub.pem"
 }

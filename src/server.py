@@ -7,9 +7,10 @@ import struct
 import os
 import hashlib
 from socketserver import StreamRequestHandler as Tcp, ThreadingTCPServer
-from Handler import Handler
+from handler import Handler
 import time
 import random
+import pycrypto_utils
 SOCKS_VERSION = 5                           # socks版本
 global_config = {}
 
@@ -53,7 +54,7 @@ class SockProxy(Handler):
             self.log("构造返回包")
             reply = struct.pack("!BBBBIH", SOCKS_VERSION, 0, 0, 0x01, addr, port)
             self.log("发送返回包")
-            self.request.sendall(self.Encrypt(reply))     # 发送回复包
+            self.request.sendall(self.sess_encrypt(reply))     # 发送回复包
             self.log("发送返回包完毕")
         except Exception as err:
             self.log(err)
@@ -80,12 +81,12 @@ class SockProxy(Handler):
             if client in rs:
                 data = client.recv(4096)
                 self.log("client to remote:{}".format(len(data)))
-                if remote.send(self.Decrypt(data)) <= 0:
+                if len(data) == 0 or remote.send(self.sess_decrypt(data)) <= 0:
                     break
             if remote in rs:
                 data = remote.recv(4096)
                 self.log("remote to client:{}".format(len(data)))
-                if client.send(self.Encrypt(data)) <= 0:
+                if len(data) == 0 or client.send(self.sess_encrypt(data)) <= 0:
                     break
 
     def HandShakeWithLocal(self):
@@ -126,19 +127,18 @@ class SockProxy(Handler):
         EY1 = self.getLongByteStream(msg="EY1")
         if EY1 is None:
             return None
-        HASHED_1 = self.getLongByteStream(msg="HASHED_1")
-        if HASHED_1 is None:
+        E1 = self.getLongByteStream(msg="HASHED_1")
+        if E1 is None:
             return None
-        if self.pub_decrypt(HASHED_1,pub=global_config["local_pub"]) != hashlib.new("sha256", X1+EY1).digest():
+        if not self.pub_verify(X1+EY1, pub=global_config["local_pub"], signature=E1):
             self.log("签名无效！")
             return False
 
         # step 5
         self.log("step5")
-        X2 = bytes("".join([chr(random.randint(0, 127)) for i in range(100)]), encoding='utf-8')
+        X2 = bytes("".join([chr(random.randint(0, 127)) for i in range(random.randint(100,200))]), encoding='utf-8')
         EY2 = bytes(self.pub_encrypt(bytes(str(Y),encoding='utf8'), global_config["local_pub"]))
-        HASHED_2 = hashlib.new("sha256", X2 + EY2).digest()
-        E2 = self.pri_encrypt(HASHED_2, global_config["server_pri"])
+        E2 = self.pri_sign(X2 + EY2, global_config["server_pri"])
         self.sendLongByteStream(X2)
         self.sendLongByteStream(EY2)
         self.sendLongByteStream(E2)
@@ -147,35 +147,21 @@ class SockProxy(Handler):
         DH.generate_shared_secret(int(str(self.pri_decrypt(EY1, global_config["server_pri"]),
                                           encoding='utf8')))
         self.SessionKey = DH.shared_key
-        self.log("[SessionKey build]: {}".format(self.SessionKey))
+        self.log("[SessionKey build]: {}({})".format(self.SessionKey,len(self.SessionKey)))
         # step 8
-        control_msg = self.getByteStream("control_msg")
+        control_msg = self.getLongByteStream("control_msg")
         if control_msg is None:
             return None
-        control_msg = str(self.Decrypt(control_msg), encoding="utf8").split(":")
+        control_msg = str(self.sess_decrypt(control_msg), encoding="utf8").split(":")
         try:
             return control_msg[0], int(control_msg[1]), int(control_msg[2])
         except Exception as e:
             self.log(e)
             return None
 
-    def pri_encrypt(self, msg_bytes: bytes, pri):
-        return msg_bytes
 
-    def pri_decrypt(self, msg_bytes: bytes, pri):
-        return msg_bytes
 
-    def pub_encrypt(self, msg_bytes: bytes, pub):
-        return msg_bytes
 
-    def pub_decrypt(self, msg_bytes: bytes, pub):
-        return msg_bytes
-
-    def Encrypt(self, msg):
-        return msg
-
-    def Decrypt(self, msg):
-        return msg
 
 if __name__ == '__main__':
     global_config = json.load(open("server_config.json"))

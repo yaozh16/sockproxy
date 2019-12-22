@@ -28,7 +28,6 @@ def merge(blocks, left_empty):
 		bytes+=block[left_empty:]
 	return bytes
 
-
 def encrypt(bytes, key, iv):
 	blocks = split(bytes,128,10)
 	print("before encrypt,",len(blocks[0]),blocks)

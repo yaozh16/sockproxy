@@ -43,7 +43,7 @@ global_config = {}
 
 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 """
-from Handler import Handler
+from handler import Handler
 
 
 class SockProxy(Handler):
@@ -206,12 +206,12 @@ class SockProxy(Handler):
             if client in rs:
                 data = client.recv(4096)
                 self.log("client to remote:{}".format(len(data)))
-                if remote.send(self.Encrypt(data)) <= 0:
+                if len(data) == 0 or remote.send(self.sess_encrypt(data)) <= 0:
                     break
             if remote in rs:
                 data = remote.recv(4096)
                 self.log("remote to client:{}".format(len(data)))
-                if client.send(self.Decrypt(data)) <= 0:
+                if len(data) == 0 or client.send(self.sess_decrypt(data)) <= 0:
                     break
 
     def HandShakeWithServer(self, remote, dst_address, dst_port, cmd):
@@ -233,7 +233,7 @@ class SockProxy(Handler):
         HASH_SEED = self.getByteStream(msg="HASH SEED", from_socket=remote)
         if HASH_SEED is None:
             return None
-        os.environ['PYTHONHASHSEED'] = str(HASH_SEED,encoding='utf8')
+        os.environ['PYTHONHASHSEED'] = str(HASH_SEED, encoding='utf8')
 
         # step 2
         self.log("step2")
@@ -241,13 +241,11 @@ class SockProxy(Handler):
         DH.generate_private_key()
         DH.generate_public_key()
         Y = DH.public_key
-
         # step 3
         self.log("step3")
         X1 = bytes("".join([chr(random.randint(0, 127)) for i in range(100)]), encoding='utf-8')
         EY1 = bytes(self.pub_encrypt(bytes(str(Y), encoding='utf8'), global_config["server_pub"]))
-        HASHED_1 = hashlib.new("sha256", X1+EY1).digest()
-        E1 = self.pri_encrypt(HASHED_1, global_config["local_pri"])
+        E1 = self.pri_sign(X1+EY1, global_config["local_pri"])
         self.sendLongByteStream(X1, to_socket=remote)
         self.sendLongByteStream(EY1, to_socket=remote)
         self.sendLongByteStream(E1, to_socket=remote)
@@ -260,10 +258,10 @@ class SockProxy(Handler):
         EY2 = self.getLongByteStream(from_socket=remote)
         if EY2 is None:
             return None
-        HASHED_2 = self.getLongByteStream(from_socket=remote)
-        if HASHED_2 is None:
+        E2 = self.getLongByteStream(from_socket=remote)
+        if E2 is None:
             return None
-        if self.pub_decrypt(HASHED_2, pub=global_config["server_pub"]) != hashlib.new("sha256", X2 + EY2).digest():
+        if not self.pub_verify(X2 + EY2, pub=global_config["server_pub"],signature=E2):
             self.log("签名无效！")
             return None
         # step 7
@@ -271,32 +269,12 @@ class SockProxy(Handler):
                                           encoding='utf8')))
 
         self.SessionKey = DH.shared_key
-        self.log("[SessionKey build]: {}".format(self.SessionKey))
+        self.log("[SessionKey build]: {}({})".format(self.SessionKey, len(self.SessionKey)))
         # step 8
-        control_msg = ":".join([str(dst_address), str(dst_port), str(cmd)])
-        self.sendByteStream(self.Encrypt(bytes(control_msg, encoding='utf8')), to_socket=remote)
+        control_msg = ":".join([str(dst_address,encoding="utf8"), str(dst_port), str(cmd)])
+        self.sendLongByteStream(self.sess_encrypt(bytes(control_msg, encoding='utf8')), to_socket=remote)
         return True
 
-
-    def pri_encrypt(self, msg_bytes: bytes, pri):
-        return msg_bytes
-
-    def pri_decrypt(self, msg_bytes: bytes, pri):
-        return msg_bytes
-
-    def pub_encrypt(self, msg_bytes: bytes, pub):
-        return msg_bytes
-
-    def pub_decrypt(self, msg_bytes: bytes, pub):
-        return msg_bytes
-
-    def Encrypt(self, msg):
-        msg = pycrypto_utils.encrypt(msg, session_key, init_vector)#session_key and init_vector as a 16 byte bytes
-        return msg
-
-    def Decrypt(self, msg):
-        msg = pycrypto_utils.decrypt(msg, session_key, init_vector)#session_key and init_vector as a 16 byte bytes
-        return msg
 
 if __name__ == '__main__':
     global_config = json.load(open("local_config.json"))
