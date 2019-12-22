@@ -1,0 +1,13 @@
+{
+  "local_address": "183.172.167.238",
+  "local_port":  22023 ,
+  "username": "yaozh16",
+  "password": "123456",
+  "auth": false,
+  "whitelist": ["183.172.167.238"],
+
+  "server_address": "183.172.167.238",
+  "server_port":  22020 ,
+  "server_pub": "server-pub.pem",
+  "local_pri": "local-pri.pem"
+}
