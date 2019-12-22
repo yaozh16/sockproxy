@@ -271,7 +271,9 @@ class SockProxy(Handler):
         self.SessionKey = DH.shared_key
         self.log("[SessionKey build]: {}({})".format(self.SessionKey, len(self.SessionKey)))
         # step 8
-        control_msg = ":".join([str(dst_address,encoding="utf8"), str(dst_port), str(cmd)])
+        dst_address = str(dst_address,encoding='utf8') if type(dst_address) != str else dst_address
+        print([dst_port, dst_address, cmd])
+        control_msg = ":".join([dst_address, str(dst_port), str(cmd)])
         self.sendLongByteStream(self.sess_encrypt(bytes(control_msg, encoding='utf8')), to_socket=remote)
         return True
 
