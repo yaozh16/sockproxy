@@ -10,13 +10,13 @@ from socketserver import StreamRequestHandler as Tcp, ThreadingTCPServer
 from handler import Handler
 import time
 import random
-import pycrypto_utils
 SOCKS_VERSION = 5                           # socks版本
 global_config = {}
 
 
 class SockProxy(Handler):
     def handle(self):
+        self.load_config(global_config)
         self.log("客户端请求连接！")
         if "*" not in global_config["whitelist"] and self.client_address[0] not in global_config["whitelist"]:
             self.log("异常连接，断开")
@@ -107,10 +107,10 @@ class SockProxy(Handler):
 
         self.log("step1")
         random.seed(time.time())
-        HASH_SEED = bytes("".join([chr(random.randint(ord('a'), ord('z'))) for i in range(10)]),encoding="utf8")
+        HASH_SEED = bytes(str(hash("".join([chr(random.randint(ord('a'), ord('z'))) for i in range(10)]))),encoding='utf8')
         self.log("HASH SEED:{}".format(HASH_SEED))
-        self.sendByteStream(HASH_SEED, to_socket=self.request)
-        os.environ['PYTHONHASHSEED'] = str(HASH_SEED,encoding="utf8")
+        self.sendLongByteStream(HASH_SEED, to_socket=self.request)
+        self.encryptor_step = int(str(HASH_SEED, encoding='utf8'))
 
         self.log("step2")
         # step 2

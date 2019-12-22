@@ -11,5 +11,3 @@
                 7. local根据P1和Y2、server根据P2和Y1计算共同的会话密钥 SK
                 8. local向server传输 address, port, cmd
 """
-
-

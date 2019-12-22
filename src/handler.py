@@ -1,5 +1,4 @@
 
-import pycrypto_utils
 from socketserver import StreamRequestHandler as Tcp, ThreadingTCPServer
 from Crypto import Random
 from Crypto.Hash import SHA
@@ -9,7 +8,7 @@ from Crypto.Signature import PKCS1_v1_5 as Signature_pkcs1_v1_5
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import AES
 
-
+import random
 # 伪随机数生成器
 random_generator = Random.new().read
 # rsa算法生成实例
@@ -21,6 +20,15 @@ rsa = RSA.generate(1024, random_generator)
 class Handler(Tcp):
     SessionKey = 'a'*64
     sess_left = b''
+    handler_config = {}
+    block_size = 64
+    block_header_size = 2
+    block_payload_size = 50
+    encryptor_accessed = 0
+    encryptor_step = 3
+
+    def load_config(self, handler_config):
+        self.handler_config = handler_config
 
     def log(self, msg):
         print("[{}]{}".format(self.client_address, msg))
@@ -70,43 +78,46 @@ class Handler(Tcp):
                 return None
         return recv
 
-    def sess_normalize(self, msg, align):
-        normalized = b''
-        for i in range(0, len(msg), align-1):
-            subset = msg[i:i+align-1]
-            length = len(subset)
-            normalized += bytes(chr(length),encoding='utf8') + subset
-        while len(normalized) % align != 0:
-            normalized += b'0'
-        return normalized
+    def block_unpack(self, msg):
+        header = msg[:self.block_header_size]
+        offset = int(header[0])
+        length = int(header[1])
+        payload = msg[offset:offset+length]
+        return payload
 
-    def sess_recover(self, msg, align):
-        recovered = b''
-        for i in range(0, len(msg), align):
-            subset = msg[i:i + align]
-            length = int(subset[0])
-            recovered += subset[1:1+length]
-        return recovered
+    def block_pack(self, payload):
+        length = len(payload)
+        offset = random.randint(self.block_header_size, self.block_size - length)
+        padding_before_payload = offset - self.block_header_size
+        padding_after_payload = self.block_size - length - offset
+        offset = bytes(chr(offset), encoding='utf8')
+        length = bytes(chr(length), encoding='utf8')
+        padding_before_payload = bytes("".join([chr(random.randint(0, 127)) for i in range(padding_before_payload)]),
+                                       encoding='utf8')
+        padding_after_payload = bytes("".join([chr(random.randint(0, 127)) for i in range(padding_after_payload)]),
+                                      encoding='utf8')
+        msg = offset + length + padding_before_payload + payload + padding_after_payload
+        return msg
 
-    def sess_encrypt(self, msg,align=16):
-        normalized = self.sess_normalize(msg,align)
+    def get_encryptor(self):
+        self.encryptor_accessed += self.encryptor_step
+        iv_offset = self.encryptor_accessed % (len(self.SessionKey) - 16)
+        return AES.new(self.SessionKey[:32], AES.MODE_CBC, self.SessionKey[iv_offset:iv_offset + 16])
+
+    def sess_encrypt(self, msg):
         encrypted = b''
-        for i in range(0, len(normalized), align):
-            encrypted += AES.new(self.SessionKey[:32], AES.MODE_CBC, self.SessionKey[-16:]). \
-                encrypt(normalized[i:i + align])
+        for i in range(0, len(msg), self.block_payload_size):
+            encrypted += self.get_encryptor().encrypt(self.block_pack(msg[i:i + self.block_payload_size]))
         return encrypted
 
-    def sess_decrypt(self, msg, align=16):
-
+    def sess_decrypt(self, msg):
         self.sess_left = self.sess_left + msg
-        next_group_length = int(len(self.sess_left) // align) * align
+        next_group_length = int(len(self.sess_left) // self.block_size) * self.block_size
         decrypted = b''
-        for i in range(0, len(self.sess_left), align):
-            decrypted += AES.new(self.SessionKey[:32], AES.MODE_CBC, self.SessionKey[-16:]).\
-                decrypt(self.sess_left[i:i+align])
-        recovered = self.sess_recover(decrypted, align)
+        for i in range(0, next_group_length, self.block_size):
+            decrypted += self.block_unpack(self.get_encryptor(). decrypt(self.sess_left[i:i+self.block_size]))
         self.sess_left = self.sess_left[next_group_length:]
-        return recovered
+        return decrypted
 
     def pub_encrypt(self, msg_bytes: bytes, pub):
         with open(pub) as f:
@@ -146,4 +157,6 @@ class Handler(Tcp):
             is_verify = verifier.verify(digest, base64.b64decode(signature))
         return is_verify
 
-
+    def finish(self):
+        super(Handler, self).finish()
+        self.log("[finished]")

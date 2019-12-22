@@ -8,7 +8,6 @@ import struct
 import hashlib
 from diffiehellman.diffiehellman import DiffieHellman
 from socketserver import StreamRequestHandler as Tcp, ThreadingTCPServer
-import pycrypto_utils
 
 SOCKS_VERSION = 5                           # socks版本
 
@@ -48,6 +47,7 @@ from handler import Handler
 
 class SockProxy(Handler):
     def handle(self):
+        self.load_config(global_config)
         self.log("客户端请求连接！")
         if "*" not in global_config["whitelist"] and self.client_address[0] not in global_config["whitelist"]:
             self.log("异常连接，断开")
@@ -230,10 +230,10 @@ class SockProxy(Handler):
         """
         # step 1
         self.log("step1")
-        HASH_SEED = self.getByteStream(msg="HASH SEED", from_socket=remote)
+        HASH_SEED = self.getLongByteStream(msg="HASH SEED", from_socket=remote)
         if HASH_SEED is None:
             return None
-        os.environ['PYTHONHASHSEED'] = str(HASH_SEED, encoding='utf8')
+        self.encryptor_step = int(str(HASH_SEED, encoding='utf8'))
 
         # step 2
         self.log("step2")
