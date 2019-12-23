@@ -89,7 +89,6 @@ class Handler(Tcp):
             header = header + b'0'
         return header
 
-
     def block_unpack(self, msg):
         header = msg[:self.block_header_size]
         offset = int(header[0])

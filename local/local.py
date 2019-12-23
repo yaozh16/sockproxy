@@ -285,6 +285,7 @@ class SockProxy(Handler):
 
 if __name__ == '__main__':
     global_config = json.load(open("local_config.json"))
+    print("run at {}".format((global_config["local_address"], global_config["local_port"])))
     # 服务器上创建一个TCP多线程服务，监听端口
     Server = ThreadingTCPServer((global_config["local_address"], global_config["local_port"]), SockProxy)
     print("listening")

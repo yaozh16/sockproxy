@@ -86,8 +86,13 @@ class SockProxy(Handler):
             if remote in rs:
                 data = remote.recv(4096)
                 self.log("remote to client:{}".format(len(data)))
-                if len(data) == 0 or client.send(self.sess_encrypt(data)) <= 0:
+                if len(data) == 0:
                     break
+                ret_code = client.send(self.sess_encrypt(data))
+                if ret_code <=0:
+                    print("ret_code :{}".format(ret_code))
+                    break
+
 
     def HandShakeWithLocal(self):
         """
