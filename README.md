@@ -153,7 +153,7 @@ Local->Browser: （未加密的）访问结果
 
   * 等待收齐64字节
   * 将每个64字节分组使用AES算法解密
-  * 根据解密后各个包信息offset和length和提取出payload
+  * 根据解密后各个包头信息offset和length和提取出payload
   * 将payload字节传输给浏览器（Browser）
 
 * local从Browser收到数据
@@ -167,7 +167,7 @@ Local->Browser: （未加密的）访问结果
 
   * 等待收齐64字节
   * 将每个64字节分组使用AES算法解密
-  * 根据解密后各个包信息offset和length和提取出payload
+  * 根据解密后各个包头信息offset和length和提取出payload
   * 将payload字节传输给目的主机（Remote）
 
 ##### 2.2.2.3 对数据进行重组的原因
